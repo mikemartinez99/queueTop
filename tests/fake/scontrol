@@ -1,0 +1,26 @@
+#!/bin/sh
+# Fake scontrol show job ID: a canned block for the requested id. StdOut points at
+# $QUEUETOP_FAKE_STDOUT (and StdErr at $QUEUETOP_FAKE_STDERR) when set.
+id="$3"
+cat <<BLOCK
+JobId=$id JobName=trimming.2
+   UserId=mike(1001) GroupId=dac(2001) MCS_label=N/A
+   Priority=12345 Nice=0 Account=dac QOS=normal
+   JobState=RUNNING Reason=None Dependency=(null)
+   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0
+   RunTime=00:51:00 TimeLimit=02:00:00 TimeMin=N/A
+   SubmitTime=2026-10-20T17:05:40 EligibleTime=2026-10-20T17:05:40
+   StartTime=2026-10-20T17:05:49 EndTime=2026-10-20T19:05:49 Deadline=N/A
+   Partition=standard AllocNode:Sid=login01:12345
+   NodeList=t03
+   NumNodes=1 NumCPUs=4 NumTasks=1 CPUs/Task=4 ReqB:S:C:T=0:0:*:*
+   TRES=cpu=4,mem=58G,node=1,billing=4
+   MinCPUsNode=4 MinMemoryNode=58G MinTmpDiskNode=0
+   Features=(null) DelayBoot=00:00:00
+   Command=/dartfs/rc/lab/rnaseq/.snakemake/tmp.abc/snakejob.trimming.2.sh --cores 4
+   WorkDir=/dartfs/rc/lab/rnaseq
+   StdErr=${QUEUETOP_FAKE_STDERR:-/dartfs/rc/lab/rnaseq/slurm_logs/log_trimming_$id.err}
+   StdIn=/dev/null
+   StdOut=${QUEUETOP_FAKE_STDOUT:-/dartfs/rc/lab/rnaseq/slurm_logs/log_trimming_$id.out}
+   Comment=a comment with spaces
+BLOCK

@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "$@" >> "${QUEUETOP_FAKE_SCANCEL_LOG:-/dev/null}"

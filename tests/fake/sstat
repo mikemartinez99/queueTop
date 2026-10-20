@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fake sstat: canned steps (JobID|AveCPU|MaxRSS|AveRSS|NTasks); 9849151 busy on 4 cores, 9849161 idle.
+printf '%s\n' \
+  '9849151.batch|2:02:00|3145728K|3000000K|1' \
+  '9849151.extern|00:00.001|1024K|1024K|1' \
+  '9849161.batch|00:38.400|52428800K|40000000K|1' \
+  '9849161.extern|00:00.001|1024K|1024K|1' \
+  '9849180.batch|12:00.000|4194304K|4000000K|1'
