@@ -149,6 +149,16 @@ pub fn squeue_user(tools: &Tools, user: &str) -> Result<Vec<QueueJob>, String> {
 
 pub const SSTAT_FORMAT: &str = "JobID,AveCPU,MaxRSS,AveRSS,NTasks";
 
+/// Slurm prints its "no value" sentinel (2^64 - 2 milliseconds) for fields it has not
+/// sampled yet, as a days-hours-minutes string in the 10^16 seconds range. Anything
+/// above a million years is that sentinel, not a measurement.
+const SANE_SECONDS: f64 = 3.2e13;
+
+/// A CPU time that is a real measurement, not Slurm's NO_VAL sentinel.
+pub fn sane_cpu_time(s: &str) -> Option<f64> {
+    parse_cpu_time(s).filter(|c| *c >= 0.0 && *c < SANE_SECONDS)
+}
+
 /// Live usage of a running job, summed over its steps.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stat {
@@ -169,10 +179,10 @@ pub fn parse_sstat(text: &str) -> IndexMap<String, Stat> {
         let base = f[0].split('.').next().unwrap_or(f[0]).to_string();
         let st = out.entry(base.clone()).or_insert_with(|| Stat { jobid: base.clone(), ..Default::default() });
         let ntasks: f64 = f[4].trim().parse().unwrap_or(1.0);
-        if let Some(c) = parse_cpu_time(f[1]) {
-            st.cpu_secs += c * ntasks.max(1.0);
+        if let Some(c) = sane_cpu_time(f[1]) {
+            st.cpu_secs += c * ntasks.clamp(1.0, 100_000.0);
         }
-        if let Some(r) = parse_mem(f[2]).filter(|v| *v > 0) {
+        if let Some(r) = parse_mem(f[2]).filter(|v| *v > 0 && (*v as f64) < 1e18) {
             st.max_rss = Some(st.max_rss.map_or(r, |c| c.max(r)));
         }
         st.steps += 1;
@@ -256,7 +266,7 @@ pub fn parse_sacct_hist(text: &str) -> IndexMap<String, HistJob> {
         h.row.timelimit = parse_limit(f[5]);
         h.row.alloc_cpus = f[9].trim().parse().ok();
         h.row.req_mem = parse_req_mem(f[6], h.row.alloc_cpus);
-        h.row.total_cpu = parse_cpu_time(f[8]);
+        h.row.total_cpu = sane_cpu_time(f[8]);
         h.row.nodelist = f[10].trim().to_string();
         h.partition = f[11].trim().to_string();
         h.submit = parse_slurm_time(f[12]);

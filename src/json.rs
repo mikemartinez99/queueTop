@@ -36,7 +36,7 @@ pub fn snapshot_json(mon: &Monitor) -> Value {
                 "submit": opt_f(j.submit), "start": opt_f(j.start), "deadline": opt_f(j.deadline()),
                 "priority": j.priority, "account": j.account, "qos": j.qos, "workdir": j.workdir,
                 "array_job": j.array_job, "array_task": j.array_task, "dependency": j.dependency,
-                "cpu_secs": opt_f(crate::model::cpu_secs(stat.as_ref(), h.as_ref())),
+                "cpu_secs": opt_f(crate::model::cpu_secs(j, stat.as_ref(), h.as_ref())),
                 "cpu_pct": opt_f(cpu_pct(j, stat.as_ref(), h.as_ref())),
                 "max_rss": opt_u(maxrss(stat.as_ref(), h.as_ref())),
                 "mem_pct": opt_f(mem_pct(j, stat.as_ref(), h.as_ref())),

@@ -26,7 +26,8 @@ fn fakes() -> PathBuf {
 }
 
 fn run_fake(name: &str) -> String {
-    let out = std::process::Command::new(fakes().join(name)).arg("x").arg("y").arg("777").output().unwrap();
+    // the popup test sets QUEUETOP_FAKE_STDOUT for the whole process; keep it out of this one
+    let out = std::process::Command::new(fakes().join(name)).env_remove("QUEUETOP_FAKE_STDOUT").env_remove("QUEUETOP_FAKE_STDERR").arg("x").arg("y").arg("777").output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -90,7 +91,26 @@ fn sstat_steps_fold_into_jobs() {
     assert_eq!(t.max_rss, Some(3145728 * 1024));
     assert_eq!(t.steps, 2);
     let r = &st["9849161"];
-    assert!((r.cpu_secs - 38.401).abs() < 1e-6);
+    assert!((r.cpu_secs - 38.401).abs() < 1e-6); // the unsampled step's NO_VAL sentinel is ignored
+    assert_eq!(r.max_rss, Some(52428800 * 1024));
+    assert_eq!(r.steps, 3);
+    assert!(queuetop::slurm::sane_cpu_time("213503982334-14:25:51").is_none());
+    assert_eq!(queuetop::slurm::sane_cpu_time("1-02:03:04.5"), Some(86400.0 + 7384.5));
+}
+
+#[test]
+fn absurd_cpu_readings_are_not_shown() {
+    use queuetop::slurm::{HistJob, QueueJob, Stat};
+    let job = QueueJob { jobid: "1".into(), time_used: Some(600), cpus: 4, ..Default::default() };
+    let stat = Stat { jobid: "1".into(), cpu_secs: 1.8e16, max_rss: None, steps: 1 };
+    assert!(cpu_pct(&job, Some(&stat), None).is_none());
+    let ok = Stat { jobid: "1".into(), cpu_secs: 1200.0, max_rss: None, steps: 1 };
+    assert!((cpu_pct(&job, Some(&ok), None).unwrap() - 0.5).abs() < 1e-9);
+    // an empty sstat falls through to sacct's TotalCPU
+    let mut h = HistJob::default();
+    h.row.total_cpu = Some(2400.0);
+    let zero = Stat { jobid: "1".into(), cpu_secs: 0.0, max_rss: None, steps: 1 };
+    assert!((cpu_pct(&job, Some(&zero), Some(&h)).unwrap() - 1.0).abs() < 1e-9);
 }
 
 #[test]

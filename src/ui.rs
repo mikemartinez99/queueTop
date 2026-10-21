@@ -451,7 +451,7 @@ impl Ui {
                 let rss = maxrss(stat.as_ref(), hist.as_ref());
                 let memp = mem_pct(j, stat.as_ref(), hist.as_ref());
                 let mut u = String::new();
-                if let Some(c) = cpu_secs(stat.as_ref(), hist.as_ref()) {
+                if let Some(c) = cpu_secs(j, stat.as_ref(), hist.as_ref()) {
                     u.push_str(&format!("cpu {} busy ({} CPU-seconds)", pct(cpu), c as i64));
                 }
                 if let Some(r) = rss {

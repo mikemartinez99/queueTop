@@ -1,55 +1,80 @@
+<p align="center"><img src="docs/logo.svg" width="128" alt="queuetop logo"></p>
+
 # queuetop
 
-`htop` for your Slurm queue. Where [hisstop](https://github.com/mikemartinez99/hisstop) follows one
-Snakemake run, queuetop follows everything you have in Slurm: your running
-and pending jobs with their live CPU and memory use, the jobs that finished
-recently with why they ended, and how efficient they were. One static
-binary, nothing to install on the cluster.
+`htop` for your Slurm queue. Every job you have in Slurm, with live CPU and
+memory use while it runs, the jobs that finished recently with why they
+ended, and how efficient they were, so the next `--mem` and `--time` you ask
+for are the right ones. One static binary, nothing to install on the cluster.
 
-```
-queuetop   mike@discovery   3 running   2 pending   16 cpus, 359.0G in use   next start in 58:12   5 finished, 3 badly
-squeue 2s ago · sstat 11s ago · sacct 40s ago (last 24hours)
+![queuetop: the queue with live cpu% and mem%, and the jobs that finished today](docs/screenshot.png)
 
-QUEUE   5
-jobid           name             partition     state     time      limit     cpus   cpu%   mem req   maxrss   mem%   node / reason
-9849151         trimming.2       standard      RUNNING   51:00     2:00:00   4      60%    58.0G     3.0G     5%     t03
-9849161         ribodetector.6   bigmem        RUNNING   32:00     3:00:00   10     0%     293.0G    50.0G    17%    s09
-9849180         jupyter          interactive   RUNNING   1:02:03   8:00:00   2      10%    8.0G      4.0G     50%    q01
-9849170         alignment.8      standard      PENDING   0:00      2:00:00   8      -      32.0G     -        -      (Priority)
-9849171_[1-3]   array_task       standard      PENDING   0:00      1:00:00   1      -      4.0G      -        -      (Resources)
+Press `Enter` on a job for everything Slurm knows about it and a live tail of
+its output file. Here a job has just been cancelled with `x`:
 
-FINISHED   5   f to move through them
-jobid     name           state           elapsed   limit     maxrss   req     mem%   cpu%   ended
-9849101   alignment.7    OUT_OF_MEMORY   40:00     2:00:00   32.0G    32.0G   100%   47%    Oct 20 16:45:00
-9849102   qc_report      TIMEOUT         1:00:05   1:00:00   500M     8.0G    6%     98%    Oct 20 16:02:05
-...
-```
+![the job popup: command, output path, and the output file tailing live with the Slurm termination line in red](docs/popup.png)
 
-## Install
+queuetop is the sibling of [hisstop](https://github.com/mikemartinez99/hisstop),
+which follows one Snakemake run; queuetop follows your whole queue.
 
-Same as hisstop, same script:
+## Installing on an HPC cluster
+
+Login nodes rarely have Rust, so build a static Linux binary on your own
+machine and copy it over.
+
+**1. On your laptop, once:** install Rust and clone this repository.
 
 ```bash
-scripts/build-linux.sh x86_64 mycluster:bin/     # from the repo root on your laptop
-ssh mycluster 'chmod +x ~/bin/queuetop && ~/bin/queuetop --version'
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # then open a new shell
+git clone https://github.com/mikemartinez99/queuetop.git && cd queuetop
 ```
 
-On the login node:
+**2. Build for the cluster and copy it over.** Use the host name or SSH alias
+you normally `ssh` to. The script adds the cross-compile target the first
+time, builds a fully static x86_64 binary (about 3 MB) and runs `scp`.
+
+```bash
+scripts/build-linux.sh x86_64 mycluster:bin/
+```
+
+For an arm64 cluster say `aarch64` instead of `x86_64`. Without the second
+argument it only builds; the binary is then at
+`target/x86_64-unknown-linux-musl/release/queuetop`. No Docker, zig or
+cross-compiler is needed: the musl target ships its own C runtime and the
+Rust toolchain links the ELF itself.
+
+**3. On the login node:** make it executable and check that it runs.
+
+```bash
+mkdir -p ~/bin && chmod +x ~/bin/queuetop && ~/bin/queuetop --version
+```
+
+If `queuetop` is not found afterwards, `~/bin` is not on your PATH there; add
+`export PATH="$HOME/bin:$PATH"` to your `~/.bashrc`. The binary runs on any
+Linux from kernel 3.10 up (RHEL 7 and newer) with no modules to load.
+
+**4. Use it.** From anywhere on the login node:
 
 ```bash
 queuetop
 ```
 
-## What it shows
+`q` quits. `squeue` is polled every 5 s, `sstat` every 15 s and `sacct`
+every 60 s; each runs in a background thread with a timeout, so a slow
+controller never freezes the screen, and each switches itself off if the
+command is missing. If accounting is not enabled on your cluster,
+`--no-sacct` saves the attempts.
+
+## What you see
 
 | Area | Source | Meaning |
 |---|---|---|
-| **Header** | `squeue`, `sacct` | running / pending counts, cores and memory you hold, Slurm's estimate for your next start, finished jobs in the window and how many ended badly |
-| **QUEUE** | `squeue -u you` | every job of yours; `time` against `limit`, `cpu%` and `mem%` are live from `sstat` while the job runs |
-| **FINISHED** | `sacct -u you -S now-24hours` | jobs that ended in the window: why (`COMPLETED`, `OUT_OF_MEMORY`, `TIMEOUT`, `exit 1`, `CANCELLED` ...), elapsed against the limit, MaxRSS against the request, CPU efficiency |
-| **Notice line** | | a job of yours just completed or ended badly (20 s) |
+| **Header** | `squeue`, `sacct` | running and pending counts, the cores and memory you hold, Slurm's estimate for your next start, finished jobs in the window and how many ended badly |
+| **QUEUE** | `squeue -u you` | every job of yours: partition, state, `time` against `limit`, cores, memory requested, node or pending reason; `cpu%` and `mem%` are live from `sstat` while the job runs |
+| **FINISHED** | `sacct -u you -S now-24hours` | jobs that ended in the window: why (`COMPLETED`, `OUT_OF_MEMORY`, `TIMEOUT`, `exit 1`, `CANCELLED` ...), elapsed against the limit, MaxRSS against the request, CPU efficiency, end time |
+| **Notice line** | | a job of yours just completed or ended badly, for 20 s |
 
-`cpu%` is CPU seconds consumed divided by elapsed time times cores: 100% means
+`cpu%` is CPU seconds consumed over elapsed time times cores: 100% means
 every core you asked for was busy the whole time. `mem%` is the largest
 resident set so far against what you requested. Colours: green running,
 yellow pending, red ended badly, dim completed.
@@ -66,22 +91,22 @@ yellow pending, red ended badly, dim completed.
 | `e` | **efficiency**: finished jobs grouped by name with a verdict per name |
 | `x` | `scancel` the job under the cursor, after `y`/`n` (`--no-cancel` disables it) |
 | `r` | poll everything now |
-| `?` | help · `q` quit |
+| `?` | help · `q` quit · `Ctrl-C` quit |
 
 **The job popup** (`Enter`) combines `squeue`, `sstat`, `sacct` and
-`scontrol show job`: state and reason (with Slurm's expected start for a
-pending job), partition / account / QOS / node, cores and memory requested,
-time used against the limit and when the limit hits, live CPU busy-ness and
-MaxRSS, submit and start times with the queue wait, dependencies, array
-membership, priority, the command and working directory. Below that it tails
-the job's output file (`StdOut`, `l` switches to `StdErr`) with trouble lines
-in red. `j` `k` scroll, `G` follows the end, `Esc` closes.
+`scontrol show job`: state and reason, with Slurm's expected start for a
+pending job; partition, account, QOS and node; cores and memory requested;
+time used against the limit and the clock time the limit hits; live CPU
+busy-ness and MaxRSS; submit and start times with the queue wait;
+dependencies, array membership, priority, the command and the working
+directory. Below that it tails the job's output file (`StdOut`, `l` switches
+to `StdErr`) with trouble lines in red. `j` `k` scroll, `G` follows the end,
+`Esc` closes.
 
 **The efficiency view** (`e`) groups finished jobs by name, the way an array
 or a pipeline rule produces many alike, and ends each row with a verdict:
 `OOM x2: raise mem`, `TIMEOUT x1: raise runtime`, `near time limit`,
-`mem over-requested: peak 500M of 8.0G`, or `ok`. That is what to put in your
-next `sbatch --mem` and `--time`.
+`mem over-requested: peak 500M of 8.0G`, or `ok`.
 
 ## Options
 
@@ -98,36 +123,56 @@ queuetop [options]
 | `--sstat-interval S` / `--no-sstat` | 15 | live usage polling |
 | `--sacct-interval S` / `--no-sacct` | 60 | finished-jobs polling |
 | `--no-cancel` | | disable `x` |
-| `--bell` | | ring when a job of yours ends |
-| `--on-event CMD` | | run a shell command when a job ends (`HISSTOP_EVENT`, `HISSTOP_JOBID`, `HISSTOP_RULE` = job name, `HISSTOP_MESSAGE`) |
-| `--once` | | print a text snapshot and exit (also when stdout is not a terminal) |
-| `--json` | | print everything as JSON and exit |
+| `--bell` | | ring the terminal when a job of yours ends |
+| `--on-event CMD` | | run a shell command when a job ends, with `HISSTOP_EVENT`, `HISSTOP_JOBID`, `HISSTOP_RULE` (the job name) and `HISSTOP_MESSAGE` in its environment |
+| `--once` | | print a text snapshot and exit (also when stdout is not a terminal, e.g. `queuetop \| mail`) |
+| `--json` | | print everything as JSON and exit: summary, queue with live usage, finished jobs, efficiency |
 
-Every Slurm command runs in a background thread with a timeout, so a slow
-controller never freezes the screen. `sstat` only answers for your own
-running jobs and only once a step is running; `sacct` needs accounting to be
-enabled on the cluster. Both switch themselves off when missing.
+## How it works
+
+* **Sources.** `squeue -u you -o ...` for the queue, `sstat -a -j ...` for the
+  live usage of your running jobs (it only answers for your own jobs and only
+  once a step is running), `sacct -u you -S since` for the history with steps
+  folded into their job, and `scontrol show job` on demand when you open a
+  popup, cached for 30 s.
+* **Sentinels.** Fields Slurm has not sampled yet come back as 2^64 - 2 and
+  print as absurd times (`213503982334-14:25:51`) or a `cpu%` in the
+  trillions. queuetop treats those as unknown and shows `-`, and it also
+  discards any CPU reading beyond what the allocation could have consumed.
+* **Memory units.** `ReqMem` with the old per-CPU (`2000Mc`) and per-node
+  (`8000Mn`) suffixes is converted to the job total; `MaxRSS` is the largest
+  over the job's steps.
+* **Array jobs.** Pending arrays show as `123_[1-3]`; running tasks as
+  `123_4`, each with its own usage.
+* **Cluster name.** From `SLURM_CLUSTER_NAME` when set, else the host name.
 
 ## Development
 
 ```bash
-cargo test            # parsers, the monitor against fake Slurm tools, screen renders, --once/--json
+cargo test                        # parsers, the monitor against fake Slurm tools, screen renders, --once/--json
 cargo clippy --all-targets
+scripts/build-linux.sh [x86_64|aarch64] [scp-destination]
+cargo run -q --example dump_screen -- main | python3 docs/render_screen.py docs/screenshot.png
 ```
 
-queuetop depends on the [hisstop](https://github.com/mikemartinez99/hisstop)
-crate from GitHub (`main` branch, see `Cargo.toml`) and reuses its library:
-`sacct` units and verdicts, tables, the popup machinery, the key handling.
-`cargo update -p hisstop` picks up a newer hisstop. `tests/fake/` holds stand-ins for `squeue`, `sstat`, `sacct`,
-`scontrol` and `scancel` with canned output. Layout: `src/slurm.rs`
-(commands and parsers), `src/monitor.rs` (pollers), `src/model.rs` (derived
-numbers), `src/text.rs` (tables, `--once`), `src/ui.rs`, `src/app.rs`,
-`src/json.rs`.
+queuetop depends on the hisstop crate from GitHub for the accounting units,
+the verdicts, the tables, the popup machinery and the key handling.
+`tests/fake/` holds stand-ins for `squeue`, `sstat`, `sacct`, `scontrol` and
+`scancel` with canned output, including Slurm's not-yet-sampled sentinel.
+Layout: `src/slurm.rs` (commands and parsers), `src/monitor.rs` (pollers),
+`src/model.rs` (derived numbers), `src/text.rs` (tables, `--once`),
+`src/ui.rs`, `src/app.rs`, `src/json.rs`. The popup screenshot is a real
+capture from Dartmouth's Polaris cluster; the queue screenshot is rendered by
+the real UI code from the fake tools (`examples/dump_screen.rs`).
 
 ## AI disclosure
 
-Like hisstop, queuetop was written by Claude (Anthropic) in sessions directed
-by Mike Martinez. It has been tested against the fake Slurm tools in
-`tests/fake/` and not yet against a real cluster; the `squeue` and `sacct`
-formats follow the Slurm documentation, but field spellings vary between
-Slurm versions, so report what looks wrong.
+Most of this repository was written by an AI. The Rust code, its tests, the
+fake Slurm tools, the build script, the screenshot renderer and this README
+were produced by Claude (Anthropic's Claude Fable 5.1, through Claude Code) in
+sessions directed by Mike Martinez, who set the goals, chose the features,
+reviewed the results and ran the tool on Dartmouth's Polaris and Discovery
+clusters. That first real run is what exposed the sentinel bug described
+above. Everything described here is covered by automated tests against the
+fake tools, but Slurm's output varies between versions and sites: treat
+`sstat` and `sacct` figures as advisory and report what looks wrong.

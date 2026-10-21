@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="queuetop logo">
+  <title>queuetop</title>
+  <!-- terminal tile -->
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="#292c33"/>
+  <!-- the queue: jobs stacked, running on top, pending below -->
+  <g>
+    <rect x="44" y="48" width="34" height="34" rx="9" fill="#5fd08a"/>
+    <rect x="44" y="92" width="34" height="34" rx="9" fill="#5fd08a"/>
+    <rect x="44" y="136" width="34" height="34" rx="9" fill="#e5e54d"/>
+    <rect x="44" y="180" width="34" height="34" rx="9" fill="none" stroke="#e5e54d" stroke-width="5"/>
+  </g>
+  <!-- usage gauges beside each running job; pending jobs have an empty track -->
+  <g>
+    <rect x="96" y="56" width="116" height="18" rx="9" fill="#3a3e47"/>
+    <rect x="96" y="56" width="98" height="18" rx="9" fill="#5fd08a"/>
+    <rect x="96" y="100" width="116" height="18" rx="9" fill="#3a3e47"/>
+    <rect x="96" y="100" width="52" height="18" rx="9" fill="#5fd08a"/>
+    <rect x="96" y="144" width="116" height="18" rx="9" fill="#3a3e47"/>
+    <rect x="96" y="188" width="116" height="18" rx="9" fill="#3a3e47"/>
+  </g>
+  <!-- cursor: the highlighted row, as on screen -->
+  <rect x="36" y="40" width="186" height="50" rx="12" fill="none" stroke="#5cc3e8" stroke-width="4"/>
+</svg>

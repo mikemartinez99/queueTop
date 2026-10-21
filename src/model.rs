@@ -48,8 +48,15 @@ pub fn summary(jobs: &[QueueJob], hist: &[HistJob]) -> Summary {
 }
 
 /// CPU seconds used so far: sstat first (live), else sacct's TotalCPU.
-pub fn cpu_secs(stat: Option<&Stat>, hist: Option<&HistJob>) -> Option<f64> {
-    stat.map(|s| s.cpu_secs).or_else(|| hist.and_then(|h| h.row.total_cpu))
+/// A reading beyond what the allocation could have consumed (every core busy
+/// for the whole elapsed time, with a wide margin) is treated as unknown.
+pub fn cpu_secs(job: &QueueJob, stat: Option<&Stat>, hist: Option<&HistJob>) -> Option<f64> {
+    let raw = stat.filter(|s| s.cpu_secs > 0.0).map(|s| s.cpu_secs).or_else(|| hist.and_then(|h| h.row.total_cpu))?;
+    let cap = job.time_used.unwrap_or(0) as f64 * job.cpus.max(1) as f64 * 4.0 + 3600.0;
+    if raw > cap {
+        return None;
+    }
+    Some(raw)
 }
 
 /// Fraction of the allocated cores kept busy so far.
@@ -58,7 +65,7 @@ pub fn cpu_pct(job: &QueueJob, stat: Option<&Stat>, hist: Option<&HistJob>) -> O
     if used <= 0.0 || job.cpus <= 0 {
         return None;
     }
-    Some(cpu_secs(stat, hist)? / (used * job.cpus as f64))
+    Some(cpu_secs(job, stat, hist)? / (used * job.cpus as f64))
 }
 
 pub fn maxrss(stat: Option<&Stat>, hist: Option<&HistJob>) -> Option<u64> {
