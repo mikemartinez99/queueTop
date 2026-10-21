@@ -2,21 +2,51 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  test:
+    name: test and clippy
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: cargo build --all-targets --locked
+      - name: test
+        # the fake Slurm tools under tests/fake/ stand in for the cluster
+        run: cargo test --locked
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  static-binary:
+    name: static linux binary (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}-musl
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl
+      - name: check it is static
+        run: file target/${{ matrix.arch }}-unknown-linux-musl/release/queuetop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: queuetop-${{ matrix.arch }}-linux-musl
+          path: target/${{ matrix.arch }}-unknown-linux-musl/release/queuetop
