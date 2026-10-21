@@ -47,11 +47,17 @@ pub fn summary(jobs: &[QueueJob], hist: &[HistJob]) -> Summary {
     s
 }
 
-/// CPU seconds used so far: sstat first (live), else sacct's TotalCPU.
-/// A reading beyond what the allocation could have consumed (every core busy
-/// for the whole elapsed time, with a wide margin) is treated as unknown.
+/// CPU seconds used so far. For a running job only sstat counts: sacct's
+/// TotalCPU is usually written when the job ends and reads 0 until then, which
+/// would show as a misleading 0%. A reading beyond what the allocation could
+/// have consumed (every core busy for the whole elapsed time, with a wide
+/// margin) is treated as unknown.
 pub fn cpu_secs(job: &QueueJob, stat: Option<&Stat>, hist: Option<&HistJob>) -> Option<f64> {
-    let raw = stat.filter(|s| s.cpu_secs > 0.0).map(|s| s.cpu_secs).or_else(|| hist.and_then(|h| h.row.total_cpu))?;
+    let raw = if job.is_running() {
+        stat.and_then(|s| s.cpu_secs)?
+    } else {
+        hist.and_then(|h| h.row.total_cpu).filter(|c| *c > 0.0)?
+    };
     let cap = job.time_used.unwrap_or(0) as f64 * job.cpus.max(1) as f64 * 4.0 + 3600.0;
     if raw > cap {
         return None;

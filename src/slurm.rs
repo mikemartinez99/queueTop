@@ -147,7 +147,7 @@ pub fn squeue_user(tools: &Tools, user: &str) -> Result<Vec<QueueJob>, String> {
 
 // ------------------------------------------------------------------ sstat
 
-pub const SSTAT_FORMAT: &str = "JobID,AveCPU,MaxRSS,AveRSS,NTasks";
+pub const SSTAT_FORMAT: &str = "JobID,AveCPU,MaxRSS,AveRSS,NTasks,TRESUsageInTot";
 
 /// Slurm prints its "no value" sentinel (2^64 - 2 milliseconds) for fields it has not
 /// sampled yet, as a days-hours-minutes string in the 10^16 seconds range. Anything
@@ -163,10 +163,16 @@ pub fn sane_cpu_time(s: &str) -> Option<f64> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stat {
     pub jobid: String,
-    /// CPU seconds consumed so far (AveCPU x NTasks, summed over steps)
-    pub cpu_secs: f64,
+    /// CPU seconds consumed so far: TRESUsageInTot's cpu= when present, else
+    /// AveCPU x NTasks, summed over steps. None when Slurm gave no usable number.
+    pub cpu_secs: Option<f64>,
     pub max_rss: Option<u64>,
     pub steps: usize,
+}
+
+/// `cpu=01:02:03,energy=0,fs/disk=123` -> the cpu entry as seconds.
+pub fn tres_cpu_seconds(tres: &str) -> Option<f64> {
+    tres.split(',').find_map(|kv| kv.trim().strip_prefix("cpu=")).and_then(sane_cpu_time)
 }
 
 pub fn parse_sstat(text: &str) -> IndexMap<String, Stat> {
@@ -179,8 +185,12 @@ pub fn parse_sstat(text: &str) -> IndexMap<String, Stat> {
         let base = f[0].split('.').next().unwrap_or(f[0]).to_string();
         let st = out.entry(base.clone()).or_insert_with(|| Stat { jobid: base.clone(), ..Default::default() });
         let ntasks: f64 = f[4].trim().parse().unwrap_or(1.0);
-        if let Some(c) = sane_cpu_time(f[1]) {
-            st.cpu_secs += c * ntasks.clamp(1.0, 100_000.0);
+        let step_cpu = f
+            .get(5)
+            .and_then(|t| tres_cpu_seconds(t))
+            .or_else(|| sane_cpu_time(f[1]).map(|c| c * ntasks.clamp(1.0, 100_000.0)));
+        if let Some(c) = step_cpu {
+            st.cpu_secs = Some(st.cpu_secs.unwrap_or(0.0) + c);
         }
         if let Some(r) = parse_mem(f[2]).filter(|v| *v > 0 && (*v as f64) < 1e18) {
             st.max_rss = Some(st.max_rss.map_or(r, |c| c.max(r)));

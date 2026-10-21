@@ -87,11 +87,18 @@ fn sstat_steps_fold_into_jobs() {
     let st = parse_sstat(&run_fake("sstat"));
     assert_eq!(st.len(), 3);
     let t = &st["9849151"];
-    assert!((t.cpu_secs - (2.0 * 3600.0 + 2.0 * 60.0 + 0.001)).abs() < 1e-6);
+    assert!((t.cpu_secs.unwrap() - (2.0 * 3600.0 + 2.0 * 60.0 + 0.001)).abs() < 1e-6);
     assert_eq!(t.max_rss, Some(3145728 * 1024));
     assert_eq!(t.steps, 2);
     let r = &st["9849161"];
-    assert!((r.cpu_secs - 38.401).abs() < 1e-6); // the unsampled step's NO_VAL sentinel is ignored
+    assert!((r.cpu_secs.unwrap() - 38.401).abs() < 1e-6); // the unsampled step's NO_VAL sentinel is ignored
+    // TRESUsageInTot's cpu= wins over AveCPU when present
+    let tres = parse_sstat("1.batch|00:01.000|100K|100K|4|cpu=00:10:00,energy=0,mem=100K\n1.0|213503982334-14:25:51|100K|100K|1|\n");
+    assert_eq!(tres["1"].cpu_secs, Some(600.0));
+    assert!(queuetop::slurm::tres_cpu_seconds("energy=0,mem=1K").is_none());
+    // a step with only the sentinel leaves cpu unknown, not zero
+    let none = parse_sstat("2.batch|213503982334-14:25:51|100K|100K|1|\n");
+    assert_eq!(none["2"].cpu_secs, None);
     assert_eq!(r.max_rss, Some(52428800 * 1024));
     assert_eq!(r.steps, 3);
     assert!(queuetop::slurm::sane_cpu_time("213503982334-14:25:51").is_none());
@@ -101,16 +108,21 @@ fn sstat_steps_fold_into_jobs() {
 #[test]
 fn absurd_cpu_readings_are_not_shown() {
     use queuetop::slurm::{HistJob, QueueJob, Stat};
-    let job = QueueJob { jobid: "1".into(), time_used: Some(600), cpus: 4, ..Default::default() };
-    let stat = Stat { jobid: "1".into(), cpu_secs: 1.8e16, max_rss: None, steps: 1 };
+    let job = QueueJob { jobid: "1".into(), state: "RUNNING".into(), time_used: Some(600), cpus: 4, ..Default::default() };
+    let stat = Stat { jobid: "1".into(), cpu_secs: Some(1.8e16), max_rss: None, steps: 1 };
     assert!(cpu_pct(&job, Some(&stat), None).is_none());
-    let ok = Stat { jobid: "1".into(), cpu_secs: 1200.0, max_rss: None, steps: 1 };
+    let ok = Stat { jobid: "1".into(), cpu_secs: Some(1200.0), max_rss: None, steps: 1 };
     assert!((cpu_pct(&job, Some(&ok), None).unwrap() - 0.5).abs() < 1e-9);
-    // an empty sstat falls through to sacct's TotalCPU
+    // a running job with no live reading shows nothing, even if sacct has a (stale, zero) TotalCPU
     let mut h = HistJob::default();
+    h.row.total_cpu = Some(0.0);
+    let unknown = Stat { jobid: "1".into(), cpu_secs: None, max_rss: None, steps: 1 };
+    assert!(cpu_pct(&job, Some(&unknown), Some(&h)).is_none());
+    assert!(cpu_pct(&job, None, Some(&h)).is_none());
+    // a finished job uses sacct's TotalCPU
+    let done = QueueJob { state: "COMPLETED".into(), ..job.clone() };
     h.row.total_cpu = Some(2400.0);
-    let zero = Stat { jobid: "1".into(), cpu_secs: 0.0, max_rss: None, steps: 1 };
-    assert!((cpu_pct(&job, Some(&zero), Some(&h)).unwrap() - 1.0).abs() < 1e-9);
+    assert!((cpu_pct(&done, None, Some(&h)).unwrap() - 1.0).abs() < 1e-9);
 }
 
 #[test]
@@ -174,9 +186,9 @@ fn monitor_polls_all_sources() {
     assert_eq!(sum.cpus_running, 16);
     assert_eq!((sum.finished, sum.finished_bad), (5, 3));
     assert_eq!(sum.next_start, parse_slurm_time("2026-10-20T18:30:00"));
-    // sacct TotalCPU stands in when sstat has nothing
+    // for a running job sacct's TotalCPU never stands in: without a live reading the cell stays unknown
     let h = mon.hist_for("9849151").unwrap();
-    assert!(cpu_pct(t, None, Some(&h)).is_some());
+    assert!(cpu_pct(t, None, Some(&h)).is_none());
     let errs = queuetop::text::errors(&mon);
     assert!(errs.is_empty(), "{:?}", errs);
 }

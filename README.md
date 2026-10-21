@@ -7,7 +7,7 @@ memory use while it runs, the jobs that finished recently with why they
 ended, and how efficient they were, so the next `--mem` and `--time` you ask
 for are the right ones. One static binary, nothing to install on the cluster.
 
-![queuetop: the queue with live cpu% and mem%, and the jobs that finished today](docs/screenshot.png)
+![queuetop on a Slurm cluster: six running jobs with their memory use, and the day's finished jobs with two cancellations](docs/screenshot.png)
 
 Press `Enter` on a job for everything Slurm knows about it and a live tail of
 its output file. Here a job has just been cancelled with `x`:
@@ -135,10 +135,15 @@ queuetop [options]
   once a step is running), `sacct -u you -S since` for the history with steps
   folded into their job, and `scontrol show job` on demand when you open a
   popup, cached for 30 s.
-* **Sentinels.** Fields Slurm has not sampled yet come back as 2^64 - 2 and
-  print as absurd times (`213503982334-14:25:51`) or a `cpu%` in the
-  trillions. queuetop treats those as unknown and shows `-`, and it also
+* **Sentinels and blanks.** Fields Slurm has not sampled yet come back as
+  2^64 - 2 and print as absurd times (`213503982334-14:25:51`) or a `cpu%` in
+  the trillions. queuetop treats those as unknown and shows `-`, and it also
   discards any CPU reading beyond what the allocation could have consumed.
+  For a running job only `sstat` counts towards `cpu%` (`TRESUsageInTot`'s
+  `cpu=` first, then `AveCPU` x `NTasks`): `sacct`'s `TotalCPU` is usually
+  written when the job ends and reads 0 until then. On clusters whose
+  accounting plugin does not sample CPU time the column stays `-` while jobs
+  run and fills in once they finish.
 * **Memory units.** `ReqMem` with the old per-CPU (`2000Mc`) and per-node
   (`8000Mn`) suffixes is converted to the job total; `MaxRSS` is the largest
   over the job's steps.
@@ -161,9 +166,10 @@ the verdicts, the tables, the popup machinery and the key handling.
 `scancel` with canned output, including Slurm's not-yet-sampled sentinel.
 Layout: `src/slurm.rs` (commands and parsers), `src/monitor.rs` (pollers),
 `src/model.rs` (derived numbers), `src/text.rs` (tables, `--once`),
-`src/ui.rs`, `src/app.rs`, `src/json.rs`. The popup screenshot is a real
-capture from Dartmouth's Polaris cluster; the queue screenshot is rendered by
-the real UI code from the fake tools (`examples/dump_screen.rs`).
+`src/ui.rs`, `src/app.rs`, `src/json.rs`. Both screenshots are real captures
+from Dartmouth's Polaris cluster; `examples/dump_screen.rs` with
+`docs/render_screen.py` renders any screen from the fake tools when no
+cluster is at hand.
 
 ## AI disclosure
 
