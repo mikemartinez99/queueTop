@@ -1,5 +1,7 @@
 # queuetop
 
+<img src="docs/logo.svg" align="right" width="128" alt="queuetop logo">
+
 `htop` for your Slurm queue. One static binary; nothing to install on the
 cluster.
 
@@ -148,26 +150,6 @@ the peak is the old limit, so raise further if the suggestion still fails.
 * The batch script (`b`) is only available while Slurm still holds the job.
 * Cleared jobs are written to `~/.cache/queuetop/cleared`.
 * Cluster name: `SLURM_CLUSTER_NAME`, else the host name.
-
-## Development
-
-```bash
-cargo test                        # parsers, the monitor against fake Slurm tools, screen renders, --once/--json
-cargo clippy --all-targets
-scripts/build-linux.sh [x86_64|aarch64] [scp-destination]
-cargo run -q --example dump_screen -- main|popup|efficiency | python3 docs/render_screen.py out.png
-```
-
-No dependencies beyond crates.io. `tests/fake/` holds stand-ins for `squeue`,
-`sstat`, `sacct`, `scontrol` and `scancel` with canned output; the tests
-freeze the clock with `QUEUETOP_NOW` so those jobs stay inside the window.
-The screenshots above are rendered from the fake tools.
-
-Layout: `src/slurm.rs` commands, parsers and unit helpers; `src/monitor.rs`
-pollers and the per-frame `Snap`; `src/model.rs` derived numbers, array
-folding, verdicts; `src/text.rs` formatting, tables, `--once`; `src/ui.rs`
-screens, keys, mouse; `src/app.rs` event loop; `src/json.rs`; `src/events.rs`
-hooks; `src/tail.rs` output tail; `src/config.rs`; `src/clock.rs`.
 
 ## AI disclosure
 
