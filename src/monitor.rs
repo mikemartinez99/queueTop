@@ -8,9 +8,8 @@ use std::time::{Duration, Instant};
 
 use indexmap::IndexMap;
 
-use hisstop::clock;
-
-use crate::slurm::{sacct_user, scancel, scontrol_job, squeue_user, sstat_jobs, HistJob, QueueJob, Stat, Tools};
+use crate::clock;
+use crate::slurm::{jobkey, sacct_user, scancel, scontrol_job, scontrol_script, since_seconds, squeue_user, sstat_jobs, HistJob, QueueJob, Stat, Tools};
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -31,6 +30,8 @@ impl Default for Options {
 
 /// How long scontrol details stay fresh.
 const DETAILS_TTL: f64 = 30.0;
+/// How long unused scontrol answers stay cached at all.
+const DETAILS_KEEP: f64 = 600.0;
 
 #[derive(Debug, Default)]
 pub struct Shared {
@@ -48,6 +49,8 @@ pub struct Shared {
     /// jobid -> (fetched at, scontrol key/values)
     pub details: HashMap<String, (f64, IndexMap<String, String>)>,
     pub details_err: HashMap<String, String>,
+    /// jobid -> (fetched at, the batch script or why not)
+    pub scripts: HashMap<String, (f64, Result<String, String>)>,
 }
 
 #[derive(Default)]
@@ -93,6 +96,28 @@ impl Poller {
     }
 }
 
+/// One consistent copy of everything a screen needs, taken under one lock.
+#[derive(Clone, Debug, Default)]
+pub struct Snap {
+    /// queue jobs: running first, then pending, then the rest; by jobid within
+    pub jobs: Vec<QueueJob>,
+    /// finished jobs inside the window, most recently ended first
+    pub hist: Vec<HistJob>,
+    stats: IndexMap<String, Stat>,
+    all_hist: IndexMap<String, HistJob>,
+}
+
+impl Snap {
+    pub fn stat_for(&self, jobid: &str) -> Option<&Stat> {
+        self.stats.get(jobid)
+    }
+
+    /// The accounting row for a job, finished or not.
+    pub fn hist_for(&self, jobid: &str) -> Option<&HistJob> {
+        self.all_hist.get(jobid)
+    }
+}
+
 pub struct Monitor {
     pub user: String,
     pub cluster: String,
@@ -102,7 +127,8 @@ pub struct Monitor {
     squeue: Poller,
     sstat: Poller,
     sacct: Poller,
-    scontrol: HashMap<String, Poller>,
+    /// one-shot scontrol fetches in flight, keyed "job:<id>" or "script:<id>"
+    oneshots: HashMap<String, Poller>,
 }
 
 impl Monitor {
@@ -117,7 +143,7 @@ impl Monitor {
             squeue: Poller::default(),
             sstat: Poller::default(),
             sacct: Poller::default(),
-            scontrol: HashMap::new(),
+            oneshots: HashMap::new(),
         };
         m.refresh();
         m
@@ -146,7 +172,9 @@ impl Monitor {
             });
         }
         let (use_sstat, use_sacct, running): (bool, bool, Vec<String>) = {
-            let s = self.shared();
+            let mut s = self.shared();
+            s.details.retain(|_, (t, _)| now - *t < DETAILS_KEEP);
+            s.scripts.retain(|_, (t, _)| now - *t < DETAILS_KEEP);
             (s.use_sstat, s.use_sacct, s.jobs.iter().filter(|j| j.is_running()).map(|j| j.jobid.clone()).collect())
         };
         if use_sstat && !running.is_empty() && self.sstat.due(now, self.opts.sstat_interval) {
@@ -189,27 +217,28 @@ impl Monitor {
                 }
             });
         }
-        self.scontrol.retain(|_, p| p.busy());
+        self.oneshots.retain(|_, p| p.busy());
+    }
+
+    /// Start a one-shot fetch under `key` unless one is running or just ran.
+    fn oneshot<F: FnOnce() + Send + 'static>(&mut self, key: String, f: F) {
+        let now = clock::now();
+        let p = self.oneshots.entry(key).or_default();
+        if p.busy() || now - p.last < 2.0 {
+            return;
+        }
+        p.last = now;
+        p.spawn("scontrol", f);
     }
 
     /// Fetch `scontrol show job` for one job unless a fresh copy exists.
     pub fn request_details(&mut self, jobid: &str) {
         let now = clock::now();
-        {
-            let s = self.shared();
-            if let Some((t, _)) = s.details.get(jobid) {
-                if now - t < DETAILS_TTL {
-                    return;
-                }
-            }
-        }
-        let p = self.scontrol.entry(jobid.to_string()).or_default();
-        if p.busy() || now - p.last < 2.0 {
+        if self.shared().details.get(jobid).is_some_and(|(t, _)| now - t < DETAILS_TTL) {
             return;
         }
-        p.last = now;
         let (shared, tools, id) = (Arc::clone(&self.shared), self.tools.clone(), jobid.to_string());
-        p.spawn("scontrol", move || {
+        self.oneshot(format!("job:{}", jobid), move || {
             let res = scontrol_job(&tools, &id);
             let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
             match res {
@@ -224,6 +253,20 @@ impl Monitor {
         });
     }
 
+    /// Fetch the submitted batch script of one job unless a fresh copy exists.
+    pub fn request_script(&mut self, jobid: &str) {
+        let now = clock::now();
+        if self.shared().scripts.get(jobid).is_some_and(|(t, _)| now - t < DETAILS_TTL) {
+            return;
+        }
+        let (shared, tools, id) = (Arc::clone(&self.shared), self.tools.clone(), jobid.to_string());
+        self.oneshot(format!("script:{}", jobid), move || {
+            let res = scontrol_script(&tools, &id);
+            let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
+            s.scripts.insert(id, (clock::now(), res));
+        });
+    }
+
     pub fn wait_all(&mut self, timeout: Option<f64>) {
         let start = Instant::now();
         let left = |t: Option<f64>| t.map(|t| (t - start.elapsed().as_secs_f64()).max(0.0));
@@ -232,33 +275,40 @@ impl Monitor {
         self.refresh();
         self.sstat.wait(left(timeout));
         self.sacct.wait(left(timeout));
-        for p in self.scontrol.values_mut() {
+        for p in self.oneshots.values_mut() {
             p.wait(left(timeout));
         }
     }
 
     // ---- reads
 
-    /// Queue jobs: running first, then pending, then the rest; by jobid within.
+    pub fn snapshot(&self) -> Snap {
+        self.snapshot_at(clock::now())
+    }
+
+    /// Everything a screen needs as of `now`, under one lock. A finished job
+    /// that ended longer ago than the `--since` window is left out, so the
+    /// list empties over a long session.
+    pub fn snapshot_at(&self, now: f64) -> Snap {
+        let keep = since_seconds(&self.opts.since);
+        let s = self.shared();
+        let mut jobs = s.jobs.clone();
+        jobs.sort_by_key(|j| (if j.is_running() { 0 } else if j.is_pending() { 1 } else { 2 }, jobkey(&j.jobid)));
+        let mut hist: Vec<HistJob> = s.hist.values().filter(|h| h.is_final() && keep.is_none_or(|k| h.end.is_none_or(|e| now - e <= k))).cloned().collect();
+        hist.sort_by(|a, b| b.end.unwrap_or(0.0).partial_cmp(&a.end.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal).then_with(|| jobkey(&b.jobid).cmp(&jobkey(&a.jobid))));
+        Snap { jobs, hist, stats: s.stats.clone(), all_hist: s.hist.clone() }
+    }
+
     pub fn jobs(&self) -> Vec<QueueJob> {
-        let mut v = self.shared().jobs.clone();
-        v.sort_by_key(|j| (if j.is_running() { 0 } else if j.is_pending() { 1 } else { 2 }, hisstop::parser::jobkey(&j.jobid)));
-        v
+        self.snapshot().jobs
     }
 
-    pub fn stat_for(&self, jobid: &str) -> Option<Stat> {
-        self.shared().stats.get(jobid).cloned()
-    }
-
-    pub fn hist_for(&self, jobid: &str) -> Option<HistJob> {
-        self.shared().hist.get(jobid).cloned()
-    }
-
-    /// Finished jobs from the accounting window, most recently ended first.
     pub fn history(&self) -> Vec<HistJob> {
-        let mut v: Vec<HistJob> = self.shared().hist.values().filter(|h| h.row.is_final()).cloned().collect();
-        v.sort_by(|a, b| b.end.unwrap_or(0.0).partial_cmp(&a.end.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal).then_with(|| hisstop::parser::jobkey(b.jobid()).cmp(&hisstop::parser::jobkey(a.jobid()))));
-        v
+        self.snapshot().hist
+    }
+
+    pub fn history_at(&self, now: f64) -> Vec<HistJob> {
+        self.snapshot_at(now).hist
     }
 
     pub fn details_for(&self, jobid: &str) -> Option<IndexMap<String, String>> {
@@ -267,6 +317,10 @@ impl Monitor {
 
     pub fn details_err(&self, jobid: &str) -> Option<String> {
         self.shared().details_err.get(jobid).cloned()
+    }
+
+    pub fn script_for(&self, jobid: &str) -> Option<Result<String, String>> {
+        self.shared().scripts.get(jobid).map(|(_, r)| r.clone())
     }
 
     pub fn cancel(&self, jobid: &str) -> Result<String, String> {

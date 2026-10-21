@@ -4,22 +4,23 @@ use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event as TermEvent};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event as TermEvent};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
-use hisstop::events::{Event, Hooks};
-
+use crate::events::{describe_all, Event, Hooks};
 use crate::monitor::Monitor;
-use crate::ui::{map_key, Key, Request, Ui};
+use crate::ui::{map_key, map_mouse, Key, Request, Ui};
 
 pub struct App {
     pub mon: Monitor,
     pub ui: Ui,
     pub hooks: Hooks,
+    /// react to clicks and the scroll wheel
+    pub mouse: bool,
     seen_final: HashSet<String>,
     primed: bool,
 }
@@ -28,43 +29,46 @@ impl App {
     pub fn new(mon: Monitor, hooks: Hooks, allow_cancel: bool) -> App {
         let mut ui = Ui::new();
         ui.allow_cancel = allow_cancel;
-        App { mon, ui, hooks, seen_final: HashSet::new(), primed: false }
+        App { mon, ui, hooks, mouse: true, seen_final: HashSet::new(), primed: false }
     }
 
-    /// Poll, and turn newly finished jobs into notices and hooks.
+    /// Poll, keep an open popup fresh, and turn newly finished jobs into
+    /// notices and hooks. The first poll only records what is already there,
+    /// so starting up does not replay the day's history.
     pub fn refresh(&mut self) {
         self.mon.refresh();
-        let hist = self.mon.history();
+        if let Some(d) = &self.ui.detail {
+            let id = d.jobid.clone();
+            self.mon.request_details(&id);
+            if d.show_script {
+                self.mon.request_script(&id);
+            }
+        }
         if self.mon.shared().hist_time.is_none() {
             return;
         }
         let mut events = Vec::new();
-        for h in &hist {
-            if self.seen_final.insert(h.row.jobid.clone()) && self.primed {
-                if h.row.is_bad() {
-                    events.push((
-                        Event::JobFailed { jobid: h.row.jobid.clone(), rule: h.name.clone(), wildcards: String::new(), ext_id: Some(h.row.jobid.clone()), log: String::new() },
-                        format!("job {} ({}) ended: {}", h.row.jobid, h.name, h.row.short()),
-                        "failed",
-                    ));
-                } else {
-                    events.push((Event::RunFinished, format!("job {} ({}) completed", h.row.jobid, h.name), "running"));
-                }
+        for h in &self.mon.history() {
+            if self.seen_final.insert(h.jobid.clone()) && self.primed {
+                events.push(Event { jobid: h.jobid.clone(), name: h.name.clone(), state: h.short(), bad: h.is_bad() });
             }
         }
         self.primed = true;
-        let status = format!("{} running", self.mon.jobs().iter().filter(|j| j.is_running()).count());
-        for (ev, text, colour) in events {
-            self.ui.notify(text, colour);
-            if self.hooks.active() {
-                if let Err(e) = self.hooks.fire(&ev, std::path::Path::new("."), &status) {
-                    self.ui.notify(e, "failed");
-                }
-            }
+        if events.is_empty() {
+            return;
         }
-        if let Some(d) = &self.ui.detail {
-            let id = d.jobid.clone();
-            self.mon.request_details(&id);
+        if events.len() <= 3 {
+            for ev in &events {
+                self.ui.notify(ev.describe(), if ev.bad { "failed" } else { "done" });
+            }
+        } else {
+            let bad = events.iter().any(|e| e.bad);
+            self.ui.notify(describe_all(&events), if bad { "failed" } else { "done" });
+        }
+        if self.hooks.active() {
+            if let Err(e) = self.hooks.fire(&events) {
+                self.ui.notify(e, "failed");
+            }
         }
     }
 
@@ -72,7 +76,7 @@ impl App {
         for req in self.ui.take_requests() {
             match req {
                 Request::Cancel { jobid } => match self.mon.cancel(&jobid) {
-                    Ok(msg) => self.ui.notify(msg, "running"),
+                    Ok(msg) => self.ui.notify(msg, "done"),
                     Err(e) => self.ui.notify(e, "failed"),
                 },
             }
@@ -89,10 +93,15 @@ impl App {
 }
 
 pub fn run(app: App, interval: f64) -> io::Result<()> {
+    let mouse = app.mouse;
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
+    if mouse {
+        let _ = io::stdout().execute(EnableMouseCapture);
+    }
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        let _ = io::stdout().execute(DisableMouseCapture);
         let _ = disable_raw_mode();
         let _ = io::stdout().execute(LeaveAlternateScreen);
         orig_hook(info);
@@ -102,6 +111,9 @@ pub fn run(app: App, interval: f64) -> io::Result<()> {
     terminal.hide_cursor()?;
     let res = event_loop(&mut terminal, app, interval);
     let _ = terminal.show_cursor();
+    if mouse {
+        let _ = io::stdout().execute(DisableMouseCapture);
+    }
     let _ = disable_raw_mode();
     let _ = io::stdout().execute(LeaveAlternateScreen);
     res
@@ -128,6 +140,12 @@ fn event_loop<B: Backend>(terminal: &mut Terminal<B>, mut app: App, interval: f6
                         if app.handle_key(key) {
                             return Ok(());
                         }
+                        break;
+                    }
+                }
+                TermEvent::Mouse(m) => {
+                    if let Some(m) = map_mouse(m) {
+                        app.ui.handle_mouse(m, &mut app.mon);
                         break;
                     }
                 }

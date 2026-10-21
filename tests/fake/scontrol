@@ -1,6 +1,11 @@
 #!/bin/sh
 # Fake scontrol show job ID: a canned block for the requested id. StdOut points at
 # $QUEUETOP_FAKE_STDOUT (and StdErr at $QUEUETOP_FAKE_STDERR) when set.
+if [ "$1" = write ]; then
+  # scontrol write batch_script ID -  : the submitted script on stdout
+  printf '%s\n' '#!/bin/bash' "#SBATCH --job-name=trimming.2" '#SBATCH --cpus-per-task=4' '#SBATCH --mem=58G' '#SBATCH --time=2:00:00' '' 'cutadapt -j 4 -o trimmed.fq reads.fq'
+  exit 0
+fi
 id="$3"
 cat <<BLOCK
 JobId=$id JobName=trimming.2

@@ -6,10 +6,14 @@
 //! efficiency, and the full details of any job from `scontrol`.
 
 pub mod app;
+pub mod clock;
+pub mod config;
+pub mod events;
 pub mod json;
 pub mod model;
 pub mod monitor;
 pub mod slurm;
+pub mod tail;
 pub mod text;
 pub mod ui;
 

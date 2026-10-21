@@ -1,6 +1,6 @@
 [package]
 name = "queuetop"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "htop for your Slurm queue: your jobs, what they use, and how efficient they were"
 license = "MIT"
@@ -10,7 +10,6 @@ name = "queuetop"
 path = "src/main.rs"
 
 [dependencies]
-hisstop = { git = "https://github.com/mikemartinez99/hisstop", branch = "main" }
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }

@@ -6,8 +6,8 @@
 use std::io::Write;
 use std::path::Path;
 
-use hisstop::events::Hooks;
 use queuetop::app::App;
+use queuetop::events::Hooks;
 use queuetop::monitor::{Monitor, Options};
 use queuetop::slurm::Tools;
 use queuetop::ui::Key;
@@ -29,7 +29,7 @@ fn main() {
     let which = std::env::args().nth(1).unwrap_or_else(|| "main".to_string());
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let now = queuetop::slurm::parse_slurm_time("2026-10-20T17:57:00").unwrap();
-    std::env::set_var("HISSTOP_NOW", format!("{}", now));
+    std::env::set_var("QUEUETOP_NOW", format!("{}", now));
     let opts = Options { squeue_interval: 0.0, sstat_interval: 0.0, sacct_interval: 0.0, ..Default::default() };
     let mut mon = Monitor::new("mike", "discovery", Tools::from_dir(&root.join("tests/fake")), opts);
     mon.wait_all(Some(10.0));
@@ -37,6 +37,9 @@ fn main() {
     if which == "popup" {
         app.handle_key(Key::Enter);
         app.mon.wait_all(Some(10.0));
+    }
+    if which == "efficiency" {
+        app.handle_key(Key::Char('e'));
     }
     let (w, h) = (150u16, 30u16);
     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();

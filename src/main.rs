@@ -3,8 +3,9 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use hisstop::events::Hooks;
 use queuetop::app::{run, App};
+use queuetop::config::{cleared_path, config_args, config_path};
+use queuetop::events::Hooks;
 use queuetop::monitor::{Monitor, Options};
 use queuetop::slurm::{cluster_name, current_user, Tools};
 use queuetop::text::snapshot_text;
@@ -13,6 +14,7 @@ use queuetop::text::snapshot_text;
 ///
 /// Your running and pending jobs with their live CPU and memory use, the jobs
 /// that finished recently with why they ended, and how efficient they were.
+/// Defaults can be set in ~/.config/queuetop.toml (one `option = value` per line).
 #[derive(Parser, Debug)]
 #[command(name = "queuetop", version, about, long_about = None)]
 struct Cli {
@@ -52,11 +54,15 @@ struct Cli {
     #[arg(long = "no-cancel")]
     no_cancel: bool,
 
+    /// ignore clicks and the scroll wheel (keeps the terminal's own text selection)
+    #[arg(long = "no-mouse")]
+    no_mouse: bool,
+
     /// ring the terminal bell when one of your jobs ends badly or completes
     #[arg(long)]
     bell: bool,
 
-    /// run this shell command when a job ends (HISSTOP_EVENT, HISSTOP_JOBID, HISSTOP_RULE=job name ...)
+    /// run this shell command when jobs end (QUEUETOP_EVENT, QUEUETOP_COUNT, QUEUETOP_JOBIDS, QUEUETOP_MESSAGE ...)
     #[arg(long = "on-event", value_name = "CMD")]
     on_event: Option<String>,
 
@@ -70,7 +76,10 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut argv: Vec<String> = std::env::args().collect();
+    let from_file = config_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| config_args(&t)).unwrap_or_default();
+    argv.splice(1..1, from_file);
+    let cli = Cli::parse_from(argv);
     let user = cli.user.clone().unwrap_or_else(current_user);
     let opts = Options {
         squeue_interval: cli.squeue_interval,
@@ -92,7 +101,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let hooks = Hooks { bell: cli.bell, command: cli.on_event.clone() };
-    match run(App::new(mon, hooks, !cli.no_cancel), cli.interval) {
+    let mut app = App::new(mon, hooks, !cli.no_cancel);
+    app.mouse = !cli.no_mouse;
+    app.ui.cleared_file = cleared_path();
+    app.ui.load_cleared();
+    match run(app, cli.interval) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("queuetop: {}", e);
