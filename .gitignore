@@ -2,4 +2,4 @@
 __pycache__/
 .DS_Store
 # raw captures dropped in the root; the README uses the trimmed ones under docs/
-Screenshot*.png
+/Screenshot*.png
