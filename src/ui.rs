@@ -404,7 +404,7 @@ impl Ui {
             Sort::Cpu => jobs.sort_by_cached_key(|j| std::cmp::Reverse(live(j).0.map(|c| (c * 1e6) as i64).unwrap_or(-1))),
             Sort::Mem => jobs.sort_by_cached_key(|j| std::cmp::Reverse(live(j).1.map(|m| (m * 1e6) as i64).unwrap_or(-1))),
             Sort::Name => jobs.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| jobkey(&a.jobid).cmp(&jobkey(&b.jobid)))),
-            Sort::Priority => jobs.sort_by(|a, b| b.priority.cmp(&a.priority)),
+            Sort::Priority => jobs.sort_by_key(|j| std::cmp::Reverse(j.priority)),
         }
         jobs
     }
